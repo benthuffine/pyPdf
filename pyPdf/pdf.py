@@ -52,6 +52,9 @@ import filters
 import utils
 import warnings
 from generic import *
+from font import *
+from cmap import *
+from generic import *
 from utils import readNonWhitespace, readUntilWhitespace, ConvertFunctionsToVirtualList
 
 if version_info < ( 2, 4 ):
@@ -1376,16 +1379,28 @@ class PageObject(DictionaryObject):
     # @return a unicode string object
     def extractText(self):
         text = u""
+        
+        fonts = self.font_hash_from_resources(self['/Resources'])
+        
         content = self["/Contents"].getObject()
         if not isinstance(content, ContentStream):
             content = ContentStream(content, self.pdf)
         # Note: we check all strings are TextStringObjects.  ByteStringObjects
         # are strings where the byte->string encoding was unknown, so adding
         # them to the text here would be gibberish.
+        
+        # If we have valid font data we'll unpack it and get plain text
+        current_font = None
         for operands,operator in content.operations:
+            if operator == 'Tf': # set font
+                current_font = operands[0]
+                if not fonts.has_key(current_font):
+                    raise utils.PdfReadError("Unknown font: %r" % current_font)
+
             if operator == "Tj":
                 _text = operands[0]
                 if isinstance(_text, TextStringObject):
+                    _text = current_font and fonts[current_font].to_utf8(_text) or _text
                     text += _text
             elif operator == "T*":
                 text += "\n"
@@ -1393,17 +1408,49 @@ class PageObject(DictionaryObject):
                 text += "\n"
                 _text = operands[0]
                 if isinstance(_text, TextStringObject):
-                    text += operands[0]
+                    _text = current_font and fonts[current_font].to_utf8(_text) or _text
+                    text += _text
             elif operator == '"':
                 _text = operands[2]
                 if isinstance(_text, TextStringObject):
+                    _text = current_font and fonts[current_font].to_utf8(_text) or _text
                     text += "\n"
                     text += _text
             elif operator == "TJ":
                 for i in operands[0]:
-                    if isinstance(i, TextStringObject):
-                        text += i
+                    _text = i
+                    if isinstance(_text, TextStringObject):
+                        _text = current_font and fonts[current_font].to_utf8(_text) or _text
+                        text += _text
         return text
+        
+        
+    # Check out the defined fonts and set up the character mapping so that
+    # we can get plain text data out
+    def font_hash_from_resources(self, resources):
+        resources = resources['/Font'].getObject()
+        
+        fonts = {}
+        for label, desc in resources.items():
+            desc = desc.getObject()
+            font = Font()
+            font.label = label
+            if desc.get('/Subtype'):
+                font.subtype = desc['/Subtype']
+            if desc.get('/BaseFont'):
+                font.basefont = desc['/BaseFont'].getObject()
+            if desc.get('/Encoding'):
+                font.encoding = Encoding(desc['/Encoding'])
+            else:
+                font.encoding = Encoding('/StandardEncoding')
+            if desc.get('/DescendantFonts'):
+                font.descendantfonts = desc['/DescendantFonts'] 
+            if desc.get('/ToUnicode'):
+                stream = desc['/ToUnicode'].getObject()
+                
+                font.tounicode = CMap(stream.getData(), self.pdf)
+            fonts[label] = font
+        return fonts
 
     ##
     # A rectangle (RectangleObject), expressed in default user space units,

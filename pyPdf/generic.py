@@ -44,7 +44,9 @@ import codecs
 def readObject(stream, pdf):
     tok = stream.read(1)
     stream.seek(-1, 1) # reset to start
-    if tok == 't' or tok == 'f':
+    if tok == '':
+      return None
+    elif tok == 't' or tok == 'f':
         # boolean object
         return BooleanObject.readFromStream(stream)
     elif tok == '(':
